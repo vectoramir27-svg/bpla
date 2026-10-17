@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
-import 'package:latlong2/latlong.dart';
+import 'package:latlong2/latlong.dart' hide Path;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
@@ -69,7 +69,7 @@ class _RadarDashboardState extends State<RadarDashboard>
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
-  // Ваши 3 канала
+  // Список публичных каналов для мониторинга
   final List<String> _channels = [
     'Radar_Moscow_99',
     'radar_moscoww',
@@ -82,7 +82,6 @@ class _RadarDashboardState extends State<RadarDashboard>
   String? _userRegion;
   bool _isSatellite = false;
   bool _isScanning = false;
-  DateTime? _lastSyncTime;
 
   late final AnimationController _radarSweepController;
   late final AnimationController _pulseController;
@@ -151,10 +150,10 @@ class _RadarDashboardState extends State<RadarDashboard>
       setState(() => _userRegion = savedRegion);
     }
 
-    // Первое сканирование (без спама пушами за прошлые 40 минут)
+    // Первое сканирование при запуске (без отправки старых пушей)
     await _scanAllChannels(isInitial: true);
 
-    // Опрос каждые 12 секунд
+    // Фоновый опрос каждые 12 секунд
     _pollTimer = Timer.periodic(
       const Duration(seconds: 12),
       (_) => _scanAllChannels(isInitial: false),
@@ -167,7 +166,9 @@ class _RadarDashboardState extends State<RadarDashboard>
 
     try {
       final results = await Future.wait(
-        _channels.map((ch) => TelegramWebScraper.fetchChannel(ch, isInitialLoad: isInitial)),
+        _channels.map(
+          (ch) => TelegramWebScraper.fetchChannel(ch, isInitialLoad: isInitial),
+        ),
       );
 
       for (final channelPosts in results) {
@@ -176,7 +177,6 @@ class _RadarDashboardState extends State<RadarDashboard>
         }
       }
       _cleanupExpiredAlerts();
-      setState(() => _lastSyncTime = DateTime.now());
     } finally {
       if (mounted) setState(() => _isScanning = false);
     }
@@ -191,7 +191,6 @@ class _RadarDashboardState extends State<RadarDashboard>
 
     if (!isCancel && !isMissile && !isDrone) return;
 
-    // Находим все упомянутые в посте локации
     final Set<String> matchedLocationNames = {};
 
     for (final geo in GeoDatabase.locations) {
@@ -207,7 +206,8 @@ class _RadarDashboardState extends State<RadarDashboard>
             if (allowPush && _userRegion == geo.regionGroup) {
               _sendPush(
                 title: '🟢 ОТБОЙ ОПАСНОСТИ: ${geo.name}',
-                body: 'В вашем регионе (${geo.regionGroup}) снята воздушная угроза. Источник: @${msg.channel}',
+                body:
+                    'В вашем регионе (${geo.regionGroup}) снята воздушная угроза. Источник: @${msg.channel}',
                 isCancel: true,
               );
             }
@@ -306,7 +306,10 @@ class _RadarDashboardState extends State<RadarDashboard>
                   Expanded(
                     child: Text(
                       'Ваш регион проживания',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ],
@@ -335,7 +338,10 @@ class _RadarDashboardState extends State<RadarDashboard>
                         items: GeoDatabase.availableRegions.map((reg) {
                           return DropdownMenuItem(
                             value: reg,
-                            child: Text(reg, style: const TextStyle(fontSize: 14)),
+                            child: Text(
+                              reg,
+                              style: const TextStyle(fontSize: 14),
+                            ),
                           );
                         }).toList(),
                         onChanged: (val) {
@@ -371,7 +377,7 @@ class _RadarDashboardState extends State<RadarDashboard>
     );
   }
 
-  // Тестовая симуляция, чтобы сразу проверить визуал дрона и пуш-уведомление
+  // Тестовая симуляция для мгновенной проверки отрисовки дрона и пуша
   void _triggerTestSimulation() {
     final targetRegion = _userRegion ?? 'Москва и МО';
     final samplePoint = GeoDatabase.locations.firstWhere(
@@ -382,7 +388,8 @@ class _RadarDashboardState extends State<RadarDashboard>
     final fakeMsg = ScrapedMessage(
       postId: 'sim_${DateTime.now().millisecondsSinceEpoch}',
       channel: 'Radar_Moscow_99 (ТЕСТ)',
-      text: '⚠️ Внимание! Зафиксировано движение БПЛА в районе ${samplePoint.name}. Соблюдайте осторожность!',
+      text:
+          '⚠️ Внимание! Зафиксировано движение БПЛА в районе ${samplePoint.name}. Соблюдайте осторожность!',
       timestamp: DateTime.now(),
     );
 
@@ -419,11 +426,12 @@ class _RadarDashboardState extends State<RadarDashboard>
                 urlTemplate: _isSatellite
                     ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
                     : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                subdomains: _isSatellite ? const [] : const ['a', 'b', 'c', 'd'],
+                subdomains:
+                    _isSatellite ? const [] : const ['a', 'b', 'c', 'd'],
                 userAgentPackageName: 'com.skyshield.radar',
               ),
 
-              // Слой зон радиуса поражения/внимания
+              // Слой зон радиуса внимания
               CircleLayer(
                 circles: alertsList.map((alert) {
                   final isMissile = alert.type == ThreatType.missile;
@@ -431,10 +439,12 @@ class _RadarDashboardState extends State<RadarDashboard>
                     point: alert.point.coords,
                     radius: alert.point.radiusKm * 1000,
                     useRadiusInMeter: true,
-                    color: (isMissile ? Colors.deepOrange : const Color(0xFFFF2A2A))
-                        .withOpacity(0.14),
-                    borderColor: (isMissile ? Colors.orangeAccent : Colors.redAccent)
-                        .withOpacity(0.55),
+                    color:
+                        (isMissile ? Colors.deepOrange : const Color(0xFFFF2A2A))
+                            .withOpacity(0.14),
+                    borderColor:
+                        (isMissile ? Colors.orangeAccent : Colors.redAccent)
+                            .withOpacity(0.55),
                     borderStrokeWidth: 1.5,
                   );
                 }).toList(),
@@ -457,7 +467,8 @@ class _RadarDashboardState extends State<RadarDashboard>
                         builder: (context, _) {
                           return CustomPaint(
                             painter: RealisticTargetPainter(
-                              sweepAngle: _radarSweepController.value * 2 * math.pi,
+                              sweepAngle:
+                                  _radarSweepController.value * 2 * math.pi,
                               pulseValue: _pulseController.value,
                               type: alert.type,
                               sourcesCount: alert.reports.length,
@@ -522,7 +533,6 @@ class _RadarDashboardState extends State<RadarDashboard>
                     ),
                     child: Row(
                       children: [
-                        // Индикатор живого сканирования
                         Container(
                           width: 10,
                           height: 10,
@@ -567,7 +577,7 @@ class _RadarDashboardState extends State<RadarDashboard>
                         IconButton(
                           tooltip: 'Сменить регион уведомлений',
                           icon: const Icon(
-                            Icons.EditLocationAltOutlined,
+                            Icons.edit_location_alt_outlined,
                             color: Colors.redAccent,
                             size: 22,
                           ),
@@ -642,7 +652,8 @@ class _RadarDashboardState extends State<RadarDashboard>
                       alertsList.isEmpty
                           ? 'Небо чистое. Активных угроз в каналах не зафиксировано.'
                           : 'Внимание! Зафиксирована активность в ${alertsList.length} р-нах. Нажмите на метку дрона для сводки.',
-                      style: const TextStyle(fontSize: 12.5, color: Colors.white),
+                      style:
+                          const TextStyle(fontSize: 12.5, color: Colors.white),
                     ),
                   ),
                 ],
@@ -859,22 +870,20 @@ class RealisticTargetPainter extends CustomPainter {
 
     final path = Path();
     if (type == ThreatType.drone) {
-      // Реалистичный силуэт ударного БПЛА (дельта-крыло / самолетный профиль)
-      path.moveTo(center.dx, center.dy - 12); // Носовой обтекатель
+      path.moveTo(center.dx, center.dy - 12);
       path.lineTo(center.dx + 3, center.dy - 5);
-      path.lineTo(center.dx + 13, center.dy + 4); // Правое крыло
-      path.lineTo(center.dx + 13, center.dy + 8); // Законцовка крыла
+      path.lineTo(center.dx + 13, center.dy + 4);
+      path.lineTo(center.dx + 13, center.dy + 8);
       path.lineTo(center.dx + 3, center.dy + 6);
-      path.lineTo(center.dx + 5, center.dy + 11); // Хвостовой стабилизатор
+      path.lineTo(center.dx + 5, center.dy + 11);
       path.lineTo(center.dx, center.dy + 9);
       path.lineTo(center.dx - 5, center.dy + 11);
       path.lineTo(center.dx - 3, center.dy + 6);
       path.lineTo(center.dx - 13, center.dy + 8);
-      path.lineTo(center.dx - 13, center.dy + 4); // Левое крыло
+      path.lineTo(center.dx - 13, center.dy + 4);
       path.lineTo(center.dx - 3, center.dy - 5);
       path.close();
     } else {
-      // Силуэт ракеты / ПВО
       path.moveTo(center.dx, center.dy - 13);
       path.lineTo(center.dx + 4, center.dy - 3);
       path.lineTo(center.dx + 4, center.dy + 6);
