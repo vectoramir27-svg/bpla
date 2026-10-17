@@ -29,10 +29,38 @@ jobs:
         run: |
           flutter create --platforms=android --org com.skyshield.radar .
 
-      - name: Inject Permissions (Internet, Notifications, Vibration)
+      - name: Inject Permissions & Enable Desugaring
         run: |
           MANIFEST="android/app/src/main/AndroidManifest.xml"
           sed -i 's/<application/<uses-permission android:name="android.permission.INTERNET"\/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"\/>\n    <uses-permission android:name="android.permission.VIBRATE"\/>\n    <application/' "$MANIFEST"
+
+          python3 - << 'EOF'
+          import os
+
+          kts_path = "android/app/build.gradle.kts"
+          groovy_path = "android/app/build.gradle"
+
+          if os.path.exists(kts_path):
+              with open(kts_path, "r") as f:
+                  content = f.read()
+              content = content.replace(
+                  "compileOptions {",
+                  "compileOptions {\n        isCoreLibraryDesugaringEnabled = true"
+              )
+              content += '\ndependencies {\n    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")\n}\n'
+              with open(kts_path, "w") as f:
+                  f.write(content)
+          elif os.path.exists(groovy_path):
+              with open(groovy_path, "r") as f:
+                  content = f.read()
+              content = content.replace(
+                  "compileOptions {",
+                  "compileOptions {\n        coreLibraryDesugaringEnabled true"
+              )
+              content += '\ndependencies {\n    coreLibraryDesugaring "com.android.tools:desugar_jdk_libs:2.1.4"\n}\n'
+              with open(groovy_path, "w") as f:
+                  f.write(content)
+          EOF
 
       - name: Install dependencies
         run: flutter pub get
