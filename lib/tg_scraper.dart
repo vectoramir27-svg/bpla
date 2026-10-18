@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:html/parser.dart' as html_parser;
 
@@ -22,30 +23,48 @@ class TelegramWebScraper {
     String channel, {
     bool isInitialLoad = false,
   }) async {
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    final directUrl = 'https://t.me/s/$channel?t=$ts';
+
+    // Список путей: сначала прямой, затем зеркала/прокси на случай блокировки/зависания
+    final List<String> endpoints = [
+      directUrl,
+      'https://api.allorigins.win/raw?url=${Uri.encodeComponent(directUrl)}',
+      'https://api.codetabs.com/v1/proxy?quest=${Uri.encodeComponent(directUrl)}',
+    ];
+
+    for (final endpoint in endpoints) {
+      try {
+        final response = await http.get(
+          Uri.parse(endpoint),
+          headers: {
+            'User-Agent':
+                'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Mobile Safari/537.36',
+            'Accept-Language': 'ru-RU,ru;q=0.9',
+            'Cache-Control': 'no-cache',
+          },
+        ).timeout(const Duration(seconds: 5));
+
+        if (response.statusCode == 200 && response.body.contains('tgme_widget_message')) {
+          return _parseHtml(response.body, channel);
+        }
+      } catch (_) {
+        // Переходим к следующему зеркалу без зависания
+        continue;
+      }
+    }
+
+    return [];
+  }
+
+  static List<ScrapedMessage> _parseHtml(String htmlBody, String channel) {
     final List<ScrapedMessage> results = [];
-    // Параметр t обходит кэширование прокси
-    final uri = Uri.parse(
-      'https://t.me/s/$channel?t=${DateTime.now().millisecondsSinceEpoch}',
-    );
-
     try {
-      final response = await http.get(
-        uri,
-        headers: {
-          'User-Agent':
-              'Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
-          'Accept-Language': 'ru-RU,ru;q=0.9',
-          'Cache-Control': 'no-cache',
-        },
-      ).timeout(const Duration(seconds: 8));
-
-      if (response.statusCode != 200) return results;
-
-      final document = html_parser.parse(response.body);
+      final document = html_parser.parse(utf8.decode(htmlBody.runes.toList(), allowMalformed: true));
       final nodes = document.querySelectorAll('.tgme_widget_message_wrap');
 
-      // Берем последние 12 постов в канале
-      final recentNodes = nodes.length > 12 ? nodes.sublist(nodes.length - 12) : nodes;
+      final recentNodes =
+          nodes.length > 12 ? nodes.sublist(nodes.length - 12) : nodes;
 
       for (final node in recentNodes) {
         final msgBox = node.querySelector('.tgme_widget_message');
@@ -56,7 +75,6 @@ class TelegramWebScraper {
         final rawText = textNode?.text.trim() ?? '';
         if (rawText.isEmpty) continue;
 
-        // Достаем реальное время публикации из тега <time datetime="...">
         DateTime postTime = DateTime.now();
         final timeElement = node.querySelector('time');
         final dtAttr = timeElement?.attributes['datetime'];
@@ -65,7 +83,7 @@ class TelegramWebScraper {
           if (parsed != null) postTime = parsed.toLocal();
         }
 
-        // Отсекаем сообщения старше 45 минут
+        // Отсекаем посты старше 45 минут
         if (DateTime.now().difference(postTime).inMinutes > 45) {
           _processedIds.add(postId);
           continue;
@@ -83,9 +101,7 @@ class TelegramWebScraper {
           );
         }
       }
-    } catch (_) {
-      // При потере сети приложение не падает, а ждет следующего цикла
-    }
+    } catch (_) {}
 
     return results;
   }
