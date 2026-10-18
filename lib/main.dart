@@ -1,7 +1,6 @@
 import 'dart:async';
-import 'dart:ui';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart' hide Path;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,15 +9,8 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'geo_data.dart';
 import 'tg_scraper.dart';
 
-void main() async {
+void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setSystemUIOverlayStyle(
-    const SystemUiOverlayStyle(
-      statusBarColor: Colors.transparent,
-      statusBarIconBrightness: Brightness.light,
-      systemNavigationBarColor: Color(0xFF090C10),
-    ),
-  );
   runApp(const SkyRadarApp());
 }
 
@@ -31,402 +23,17 @@ class SkyRadarApp extends StatelessWidget {
       title: 'SkyRadar',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: const Color(0xFF090C10),
-        textTheme: const TextTheme(
-          bodyMedium: TextStyle(
-            fontFamily: 'sans-serif',
-            letterSpacing: -0.2,
-          ),
+        scaffoldBackgroundColor: const Color(0xFF0B0E14),
+        colorScheme: const ColorScheme.dark(
+          primary: Color(0xFFFF3B30),
+          secondary: Color(0xFF00E676),
         ),
       ),
-      home: const RootFlowController(),
+      home: const RadarDashboard(),
     );
   }
 }
 
-/// УПРАВЛЕНИЕ ЭКРАНАМИ:
-/// 1. Красивая анимация загрузки (Splash)
-/// 2. Полноэкранный выбор региона (только при первом входе или по клику на карандаш)
-/// 3. Чистая LIVE-карта
-enum AppStage { splash, selectRegion, radarMap }
-
-class RootFlowController extends StatefulWidget {
-  const RootFlowController({super.key});
-
-  @override
-  State<RootFlowController> createState() => _RootFlowControllerState();
-}
-
-class _RootFlowControllerState extends State<RootFlowController> {
-  AppStage _stage = AppStage.splash;
-  String? _userRegion;
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeFlow();
-  }
-
-  Future<void> _initializeFlow() async {
-    final prefs = await SharedPreferences.getInstance();
-    final savedRegion = prefs.getString('user_home_region');
-
-    // Даем проиграться плавной стартовой анимации
-    await Future.delayed(const Duration(milliseconds: 2200));
-
-    if (!mounted) return;
-    setState(() {
-      _userRegion = savedRegion;
-      _stage =
-          savedRegion == null ? AppStage.selectRegion : AppStage.radarMap;
-    });
-  }
-
-  Future<void> _onRegionSaved(String newRegion) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('user_home_region', newRegion);
-    if (!mounted) return;
-    setState(() {
-      _userRegion = newRegion;
-      _stage = AppStage.radarMap;
-    });
-  }
-
-  void _openRegionEditor() {
-    setState(() {
-      _stage = AppStage.selectRegion;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 550),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      child: _buildCurrentStage(),
-    );
-  }
-
-  Widget _buildCurrentStage() {
-    switch (_stage) {
-      case AppStage.splash:
-        return const AppleSplashView(key: ValueKey('splash'));
-      case AppStage.selectRegion:
-        return RegionSelectionScreen(
-          key: const ValueKey('region_select'),
-          initialRegion: _userRegion,
-          onSelect: _onRegionSaved,
-        );
-      case AppStage.radarMap:
-        return LiveRadarMapScreen(
-          key: const ValueKey('radar_map'),
-          userRegion: _userRegion ?? GeoDatabase.availableRegions.first,
-          onEditRegion: _openRegionEditor,
-        );
-    }
-  }
-}
-
-/// 1. ЭКРАН ЗАГРУЗКИ В СТИЛЕ APPLE
-class AppleSplashView extends StatefulWidget {
-  const AppleSplashView({super.key});
-
-  @override
-  State<AppleSplashView> createState() => _AppleSplashViewState();
-}
-
-class _AppleSplashViewState extends State<AppleSplashView>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _pulseCtrl;
-
-  @override
-  void initState() {
-    super.initState();
-    _pulseCtrl = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1600),
-    )..repeat();
-  }
-
-  @override
-  void dispose() {
-    _pulseCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF090C10),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            SizedBox(
-              width: 130,
-              height: 130,
-              child: AnimatedBuilder(
-                animation: _pulseCtrl,
-                builder: (context, _) {
-                  return Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      // Расходящиеся волны радара
-                      for (int i = 0; i < 3; i++)
-                        Builder(builder: (context) {
-                          final progress = (_pulseCtrl.value + i * 0.33) % 1.0;
-                          return Container(
-                            width: 36 + (progress * 94),
-                            height: 36 + (progress * 94),
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: const Color(0xFFFF3B30)
-                                    .withOpacity((1.0 - progress) * 0.65),
-                                width: 1.8,
-                              ),
-                            ),
-                          );
-                        }),
-                      Container(
-                        width: 56,
-                        height: 56,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          gradient: const LinearGradient(
-                            colors: [Color(0xFFFF453A), Color(0xFFD70015)],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          boxShadow: [
-                            BoxShadow(
-                              color: const Color(0xFFFF3B30).withOpacity(0.5),
-                              blurRadius: 24,
-                              spreadRadius: 2,
-                            ),
-                          ],
-                        ),
-                        child: const Icon(
-                          Icons.radar_rounded,
-                          color: Colors.white,
-                          size: 30,
-                        ),
-                      ),
-                    ],
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 28),
-            const Text(
-              'SKYRADAR',
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 1.5,
-                color: Colors.white,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Подключение к прямому эфиру...',
-              style: TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: Colors.white.withOpacity(0.45),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// 2. ПОЛНОЭКРАННЫЙ ВЫБОР РЕГИОНА (В СТИЛЕ iOS ONBOARDING)
-class RegionSelectionScreen extends StatefulWidget {
-  final String? initialRegion;
-  final ValueChanged<String> onSelect;
-
-  const RegionSelectionScreen({
-    super.key,
-    required this.initialRegion,
-    required this.onSelect,
-  });
-
-  @override
-  State<RegionSelectionScreen> createState() => _RegionSelectionScreenState();
-}
-
-class _RegionSelectionScreenState extends State<RegionSelectionScreen> {
-  late String _selected;
-
-  @override
-  void initState() {
-    super.initState();
-    _selected = widget.initialRegion ?? GeoDatabase.availableRegions.first;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFF090C10),
-      body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(22, 28, 22, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFF3B30).withOpacity(0.14),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.notifications_active_rounded,
-                  color: Color(0xFFFF453A),
-                  size: 28,
-                ),
-              ),
-              const SizedBox(height: 20),
-              const Text(
-                'Где вы проживаете?',
-                style: TextStyle(
-                  fontSize: 30,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -0.6,
-                  color: Colors.white,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Выберите свой регион. Приложение будет мгновенно присылать Push-уведомления при угрозе БПЛА и отбое тревоги.',
-                style: TextStyle(
-                  fontSize: 15,
-                  height: 1.4,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.white.withOpacity(0.55),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Expanded(
-                child: ListView.separated(
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: GeoDatabase.availableRegions.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final region = GeoDatabase.availableRegions[index];
-                    final isChosen = region == _selected;
-
-                    return GestureDetector(
-                      onTap: () {
-                        HapticFeedback.selectionClick();
-                        setState(() => _selected = region);
-                      },
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOut,
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 18,
-                          vertical: 16,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isChosen
-                              ? const Color(0xFFFF3B30).withOpacity(0.16)
-                              : const Color(0xFF131720),
-                          borderRadius: BorderRadius.circular(18),
-                          border: Border.all(
-                            color: isChosen
-                                ? const Color(0xFFFF453A)
-                                : Colors.white.withOpacity(0.06),
-                            width: isChosen ? 1.6 : 1.0,
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                region,
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: isChosen
-                                      ? FontWeight.w800
-                                      : FontWeight.w600,
-                                  color: isChosen
-                                      ? Colors.white
-                                      : Colors.white.withOpacity(0.8),
-                                ),
-                              ),
-                            ),
-                            AnimatedContainer(
-                              duration: const Duration(milliseconds: 200),
-                              width: 24,
-                              height: 24,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: isChosen
-                                    ? const Color(0xFFFF453A)
-                                    : Colors.transparent,
-                                border: Border.all(
-                                  color: isChosen
-                                      ? const Color(0xFFFF453A)
-                                      : Colors.white24,
-                                  width: 2,
-                                ),
-                              ),
-                              child: isChosen
-                                  ? const Icon(
-                                      Icons.check_rounded,
-                                      size: 16,
-                                      color: Colors.white,
-                                    )
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                height: 58,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFFFF3B30),
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(18),
-                    ),
-                  ),
-                  onPressed: () {
-                    HapticFeedback.mediumImpact();
-                    widget.onSelect(_selected);
-                  },
-                  child: const Text(
-                    'Продолжить',
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.2,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// МОДЕЛИ АКТИВНЫХ СОБЫТИЙ
 class SourceReport {
   final String channel;
   final String text;
@@ -449,23 +56,15 @@ class ActiveAlert {
   });
 }
 
-/// 3. ГЛАВНЫЙ ЭКРАН ЖИВОЙ ТАКТИЧЕСКОЙ КАРТЫ
-class LiveRadarMapScreen extends StatefulWidget {
-  final String userRegion;
-  final VoidCallback onEditRegion;
-
-  const LiveRadarMapScreen({
-    super.key,
-    required this.userRegion,
-    required this.onEditRegion,
-  });
+class RadarDashboard extends StatefulWidget {
+  const RadarDashboard({super.key});
 
   @override
-  State<LiveRadarMapScreen> createState() => _LiveRadarMapScreenState();
+  State<RadarDashboard> createState() => _RadarDashboardState();
 }
 
-class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
-    with SingleTickerProviderStateMixin {
+class _RadarDashboardState extends State<RadarDashboard>
+    with TickerProviderStateMixin {
   final MapController _mapController = MapController();
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
@@ -476,44 +75,79 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
     'radarrussiia',
   ];
 
+  // Активные тревоги без дублирования (ключ = point.name)
   final Map<String, ActiveAlert> _activeAlerts = {};
+
+  String? _userRegion;
+  bool _isSatellite = false;
   bool _isScanning = false;
+  String _statusText = 'Синхронизация с каналами...';
 
-  late final AnimationController _radarBeaconCtrl;
-  Timer? _liveStreamTimer;
-
-  // Матрица фильтрации: превращает стандартную карту OpenStreetMap
-  // в стильную темную тактическую карту без всяких API-ключей!
-  static const List<double> _tacticalDarkMatrix = <double>[
-    -0.82, 0.0, 0.0, 0.0, 195.0,
-    0.0, -0.80, 0.0, 0.0, 205.0,
-    0.0, 0.0, -0.72, 0.0, 225.0,
-    0.0, 0.0, 0.0, 1.0, 0.0,
-  ];
+  late final AnimationController _radarSweepController;
+  late final AnimationController _pulseController;
+  Timer? _pollTimer;
 
   @override
   void initState() {
     super.initState();
 
-    _radarBeaconCtrl = AnimationController(
+    _radarSweepController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 2000),
+      duration: const Duration(seconds: 4),
     )..repeat();
 
-    _initNotifications();
-    _startRealtimeStream();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+
+    // Запускаем всё неблокирующим образом, чтобы интерфейс открылся мгновенно
+    _bootAppNonBlocking();
   }
 
-  Future<void> _initNotifications() async {
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = InitializationSettings(android: androidSettings);
-    await _notifications.initialize(initSettings);
+  Future<void> _bootAppNonBlocking() async {
+    // 1. Загружаем сохраненный регион с жестким тайм-аутом
+    try {
+      final prefs = await SharedPreferences.getInstance()
+          .timeout(const Duration(seconds: 2));
+      final savedRegion = prefs.getString('user_home_region');
 
-    final androidPlugin =
-        _notifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-    await androidPlugin?.requestNotificationsPermission();
+      if (savedRegion == null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showRegionOnboardingDialog(isFirstLaunch: true);
+        });
+      } else {
+        if (mounted) setState(() => _userRegion = savedRegion);
+      }
+    } catch (_) {}
+
+    // 2. Инициализируем пуш-уведомления в фоне (не блокируя UI!)
+    unawaited(_initNotificationsSafe());
+
+    // 3. Первое сканирование каналов в фоне
+    unawaited(_scanAllChannels(isInitial: true));
+
+    // 4. Регулярный опрос каждые 12 секунд
+    _pollTimer = Timer.periodic(
+      const Duration(seconds: 12),
+      (_) => _scanAllChannels(isInitial: false),
+    );
+  }
+
+  Future<void> _initNotificationsSafe() async {
+    try {
+      const androidSettings =
+          AndroidInitializationSettings('@mipmap/ic_launcher');
+      const initSettings = InitializationSettings(android: androidSettings);
+      await _notifications
+          .initialize(initSettings)
+          .timeout(const Duration(seconds: 3));
+
+      final androidPlugin =
+          _notifications.resolvePlatformSpecificImplementation<
+              AndroidFlutterLocalNotificationsPlugin>();
+      await androidPlugin?.requestNotificationsPermission();
+    } catch (_) {}
   }
 
   Future<void> _sendPush({
@@ -521,58 +155,69 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
     required String body,
     bool isCancel = false,
   }) async {
-    final androidDetails = AndroidNotificationDetails(
-      isCancel ? 'sky_radar_clear' : 'sky_radar_danger',
-      isCancel ? 'Отбой опасности' : 'Экстренные оповещения БПЛА',
-      importance: Importance.max,
-      priority: Priority.high,
-      color: isCancel ? const Color(0xFF30D158) : const Color(0xFFFF453A),
-      enableVibration: true,
-      playSound: true,
-    );
+    try {
+      final androidDetails = AndroidNotificationDetails(
+        isCancel ? 'sky_radar_clear' : 'sky_radar_danger',
+        isCancel ? 'Отбой тревоги' : 'Экстренные оповещения БПЛА',
+        importance: Importance.max,
+        priority: Priority.high,
+        color: isCancel ? const Color(0xFF00E676) : const Color(0xFFFF2A2A),
+        enableVibration: true,
+        playSound: true,
+      );
 
-    await _notifications.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title,
-      body,
-      NotificationDetails(android: androidDetails),
-    );
+      await _notifications.show(
+        DateTime.now().millisecondsSinceEpoch ~/ 1000,
+        title,
+        body,
+        NotificationDetails(android: androidDetails),
+      );
+    } catch (_) {}
   }
 
-  Future<void> _startRealtimeStream() async {
-    // Первичная загрузка сводки
-    await _fetchLiveUpdates(isInitial: true);
-
-    // Прямой эфир: опрос каждые 8 секунд без участия пользователя
-    _liveStreamTimer = Timer.periodic(
-      const Duration(seconds: 8),
-      (_) => _fetchLiveUpdates(isInitial: false),
-    );
-  }
-
-  Future<void> _fetchLiveUpdates({required bool isInitial}) async {
+  Future<void> _scanAllChannels({bool isInitial = false}) async {
     if (_isScanning) return;
-    if (mounted) setState(() => _isScanning = true);
+    if (mounted) {
+      setState(() {
+        _isScanning = true;
+        _statusText = 'Обновление сводки из 3 каналов...';
+      });
+    }
 
     try {
       final results = await Future.wait(
         _channels.map(
           (ch) => TelegramWebScraper.fetchChannel(ch, isInitialLoad: isInitial),
         ),
-      );
+      ).timeout(const Duration(seconds: 12));
 
       for (final channelPosts in results) {
         for (final msg in channelPosts) {
-          _processIncomingMessage(msg, allowPush: !isInitial);
+          _analyzeMessage(msg, allowPush: !isInitial);
         }
       }
-      _purgeExpiredAlerts();
+      _cleanupExpiredAlerts();
+
+      final now = DateTime.now();
+      final timeStr =
+          '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+      if (mounted) {
+        setState(() {
+          _statusText = 'Прямой эфир активен (обновлено в $timeStr)';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _statusText = 'Ожидание ответа сети... Повтор через 12 сек';
+        });
+      }
     } finally {
       if (mounted) setState(() => _isScanning = false);
     }
   }
 
-  void _processIncomingMessage(ScrapedMessage msg, {required bool allowPush}) {
+  void _analyzeMessage(ScrapedMessage msg, {required bool allowPush}) {
     final lower = msg.text.toLowerCase();
 
     final isCancel = GeoDatabase.cancelKeywords.any(lower.contains);
@@ -581,23 +226,23 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
 
     if (!isCancel && !isMissile && !isDrone) return;
 
-    final Set<String> matchedLocations = {};
+    final Set<String> matchedLocationNames = {};
 
     for (final geo in GeoDatabase.locations) {
       if (lower.contains(geo.key)) {
-        if (matchedLocations.contains(geo.name)) continue;
-        matchedLocations.add(geo.name);
+        if (matchedLocationNames.contains(geo.name)) continue;
+        matchedLocationNames.add(geo.name);
 
-        // 1. ОТБОЙ ТРЕВОГИ
+        // СЦЕНАРИЙ 1: ОТБОЙ ОПАСНОСТИ
         if (isCancel && !isDrone) {
           if (_activeAlerts.containsKey(geo.name)) {
             setState(() => _activeAlerts.remove(geo.name));
 
-            if (allowPush && widget.userRegion == geo.regionGroup) {
+            if (allowPush && _userRegion == geo.regionGroup) {
               _sendPush(
-                title: '🟢 Отбой опасности: ${geo.name}',
+                title: '🟢 ОТБОЙ ОПАСНОСТИ: ${geo.name}',
                 body:
-                    'В регионе (${geo.regionGroup}) снята воздушная угроза. Источник: @${msg.channel}',
+                    'В вашем регионе (${geo.regionGroup}) снята воздушная угроза. Источник: @${msg.channel}',
                 isCancel: true,
               );
             }
@@ -605,21 +250,22 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
           continue;
         }
 
-        // 2. ОБНАРУЖЕНИЕ УГРОЗЫ (БПЛА ИЛИ РАКЕТНАЯ/ПВО)
-        final ThreatType type =
+        // СЦЕНАРИЙ 2: ОБНАРУЖЕНИЕ ДРОНА ИЛИ РАКЕТНОЙ ОПАСНОСТИ
+        final ThreatType detectedType =
             isMissile ? ThreatType.missile : ThreatType.drone;
-        final bool alreadyExists = _activeAlerts.containsKey(geo.name);
+
+        final bool wasAlreadyActive = _activeAlerts.containsKey(geo.name);
 
         setState(() {
-          if (alreadyExists) {
+          if (wasAlreadyActive) {
             final existing = _activeAlerts[geo.name]!;
             existing.lastUpdated = msg.timestamp;
-            if (type == ThreatType.missile) {
+            if (detectedType == ThreatType.missile) {
               existing.type = ThreatType.missile;
             }
-            final duplicate =
+            final isDuplicateText =
                 existing.reports.any((r) => r.text == msg.text);
-            if (!duplicate) {
+            if (!isDuplicateText) {
               existing.reports.insert(
                 0,
                 SourceReport(
@@ -632,7 +278,7 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
           } else {
             _activeAlerts[geo.name] = ActiveAlert(
               point: geo,
-              type: type,
+              type: detectedType,
               lastUpdated: msg.timestamp,
               reports: [
                 SourceReport(
@@ -645,12 +291,12 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
           }
         });
 
-        if (allowPush && !alreadyExists && widget.userRegion == geo.regionGroup) {
-          final prefix = type == ThreatType.missile
-              ? '🚨 Ракетная опасность / ПВО'
-              : '⚠️ Опасность БПЛА';
+        if (allowPush && !wasAlreadyActive && _userRegion == geo.regionGroup) {
+          final String prefix = detectedType == ThreatType.missile
+              ? '🚨 РАКЕТНАЯ / ПВО ТРЕВОГА'
+              : '⚠️ УГРОЗА БПЛА';
           _sendPush(
-            title: '$prefix • ${geo.name}',
+            title: '$prefix: ${geo.name}',
             body: msg.text.length > 140
                 ? '${msg.text.substring(0, 140)}...'
                 : msg.text,
@@ -661,8 +307,9 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
     }
   }
 
-  void _purgeExpiredAlerts() {
+  void _cleanupExpiredAlerts() {
     final now = DateTime.now();
+    if (!mounted) return;
     setState(() {
       _activeAlerts.removeWhere(
         (_, alert) => now.difference(alert.lastUpdated).inMinutes > 35,
@@ -670,78 +317,222 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
     });
   }
 
+  Future<void> _showRegionOnboardingDialog({bool isFirstLaunch = false}) async {
+    String selected = _userRegion ?? GeoDatabase.availableRegions.first;
+
+    await showDialog(
+      context: context,
+      barrierDismissible: !isFirstLaunch,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              backgroundColor: const Color(0xFF151922),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+                side: const BorderSide(color: Colors.redAccent, width: 1),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.shield_outlined, color: Colors.redAccent),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Ваш регион проживания',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'Выберите свой регион, чтобы мгновенно получать Push-уведомления об угрозе БПЛА и отбое тревоги:',
+                    style: TextStyle(color: Colors.white70, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0B0E14),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white24),
+                    ),
+                    child: DropdownButtonHideUnderline(
+                      child: DropdownButton<String>(
+                        value: selected,
+                        isExpanded: true,
+                        dropdownColor: const Color(0xFF151922),
+                        items: GeoDatabase.availableRegions.map((reg) {
+                          return DropdownMenuItem(
+                            value: reg,
+                            child: Text(
+                              reg,
+                              style: const TextStyle(fontSize: 14),
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) setDialogState(() => selected = val);
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFFFF3B30),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () async {
+                    setState(() => _userRegion = selected);
+                    if (context.mounted) Navigator.pop(context);
+                    try {
+                      final prefs = await SharedPreferences.getInstance();
+                      await prefs.setString('user_home_region', selected);
+                    } catch (_) {}
+                  },
+                  child: const Text('Сохранить и включить защиту'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _triggerTestSimulation() {
+    final targetRegion = _userRegion ?? 'Москва и МО';
+    final samplePoint = GeoDatabase.locations.firstWhere(
+      (g) => g.regionGroup == targetRegion,
+      orElse: () => GeoDatabase.locations.first,
+    );
+
+    final fakeMsg = ScrapedMessage(
+      postId: 'sim_${DateTime.now().millisecondsSinceEpoch}',
+      channel: 'Radar_Moscow_99 (ТЕСТ)',
+      text:
+          '⚠️ Внимание! Зафиксировано движение БПЛА в районе ${samplePoint.name}. Соблюдайте осторожность!',
+      timestamp: DateTime.now(),
+    );
+
+    _analyzeMessage(fakeMsg, allowPush: true);
+    _mapController.move(samplePoint.coords, 9.5);
+  }
+
   @override
   void dispose() {
-    _liveStreamTimer?.cancel();
-    _radarBeaconCtrl.dispose();
+    _pollTimer?.cancel();
+    _radarSweepController.dispose();
+    _pulseController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final alerts = _activeAlerts.values.toList();
+    final alertsList = _activeAlerts.values.toList();
 
     return Scaffold(
       body: Stack(
         children: [
-          // 1. ЖИВАЯ ТАКТИЧЕСКАЯ КАРТА (РАБОТАЕТ БЕЗ API КЛЮЧЕЙ)
+          // 1. ИНТЕРАКТИВНАЯ КАРТА (ОТКРЫВАЕТСЯ МГНОВЕННО)
           FlutterMap(
             mapController: _mapController,
             options: const MapOptions(
               initialCenter: LatLng(55.55, 37.45),
               initialZoom: 7.2,
               minZoom: 4.0,
-              maxZoom: 17.5,
-              interactionOptions: InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-              ),
+              maxZoom: 17.0,
             ),
             children: [
-              ColorFiltered(
-                colorFilter: const ColorFilter.matrix(_tacticalDarkMatrix),
-                child: TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.skyshield.radar',
-                  maxZoom: 18,
-                ),
+              TileLayer(
+                urlTemplate: _isSatellite
+                    ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+                subdomains:
+                    _isSatellite ? const [] : const ['a', 'b', 'c', 'd'],
+                userAgentPackageName: 'com.skyshield.radar',
               ),
 
-              // Мягкое свечение радиуса зоны опасности
               CircleLayer(
-                circles: alerts.map((alert) {
-                  final color = alert.type == ThreatType.missile
-                      ? const Color(0xFFFF9F0A)
-                      : const Color(0xFFFF453A);
+                circles: alertsList.map((alert) {
+                  final isMissile = alert.type == ThreatType.missile;
                   return CircleMarker(
                     point: alert.point.coords,
-                    radius: alert.point.radiusKm * 900,
+                    radius: alert.point.radiusKm * 1000,
                     useRadiusInMeter: true,
-                    color: color.withOpacity(0.11),
-                    borderColor: color.withOpacity(0.35),
-                    borderStrokeWidth: 1.2,
+                    color:
+                        (isMissile ? Colors.deepOrange : const Color(0xFFFF2A2A))
+                            .withOpacity(0.14),
+                    borderColor:
+                        (isMissile ? Colors.orangeAccent : Colors.redAccent)
+                            .withOpacity(0.55),
+                    borderStrokeWidth: 1.5,
                   );
                 }).toList(),
               ),
 
-              // Слой аккуратных мигающих радарных маяков (Apple-style)
               MarkerLayer(
-                markers: alerts.map((alert) {
+                markers: alertsList.map((alert) {
                   return Marker(
                     point: alert.point.coords,
-                    width: 110,
-                    height: 76,
-                    rotate: false,
+                    width: 90,
+                    height: 90,
                     child: GestureDetector(
-                      onTap: () {
-                        HapticFeedback.lightImpact();
-                        _showAppleAlertSheet(alert);
-                      },
+                      onTap: () => _openAlertDetailsSheet(alert),
                       child: AnimatedBuilder(
-                        animation: _radarBeaconCtrl,
+                        animation: Listenable.merge([
+                          _radarSweepController,
+                          _pulseController,
+                        ]),
                         builder: (context, _) {
-                          return _buildRadarBeaconMarker(
-                            alert: alert,
-                            progress: _radarBeaconCtrl.value,
+                          return CustomPaint(
+                            painter: RealisticTargetPainter(
+                              sweepAngle:
+                                  _radarSweepController.value * 2 * math.pi,
+                              pulseValue: _pulseController.value,
+                              type: alert.type,
+                              sourcesCount: alert.reports.length,
+                            ),
+                            child: Center(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 58),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withOpacity(0.8),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: Colors.redAccent.withOpacity(0.6),
+                                      width: 0.8,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    alert.point.name,
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ),
                           );
                         },
                       ),
@@ -752,98 +543,159 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
             ],
           ),
 
-          // 2. ВЕРХНЯЯ МАТОВАЯ КАПСУЛА (DYNAMIC ISLAND В СТИЛЕ APPLE)
+          // 2. ВЕРХНЯЯ ПАНЕЛЬ УПРАВЛЕНИЯ (ТАКТИЧЕСКИЙ HUD)
           SafeArea(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: BackdropFilter(
-                  filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-                  child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 12,
+                      horizontal: 14,
+                      vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF141820).withOpacity(0.78),
-                      borderRadius: BorderRadius.circular(24),
-                      border: Border.all(
-                        color: Colors.white.withOpacity(0.09),
-                        width: 1,
-                      ),
+                      color: const Color(0xFF12161F).withOpacity(0.92),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: Colors.white12),
+                      boxShadow: const [
+                        BoxShadow(color: Colors.black54, blurRadius: 12),
+                      ],
                     ),
                     child: Row(
                       children: [
-                        // Мигающий индикатор ПРЯМОГО ЭФИРА
-                        _buildLiveDot(),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  const Text(
-                                    'ПРЯМОЙ ЭФИР',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w900,
-                                      letterSpacing: 0.8,
-                                      color: Color(0xFF30D158),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    '• Угроз: ${alerts.length}',
-                                    style: TextStyle(
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w700,
-                                      color: alerts.isEmpty
-                                          ? Colors.white54
-                                          : const Color(0xFFFF453A),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                widget.userRegion,
-                                style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
-                                  letterSpacing: -0.3,
-                                ),
-                                overflow: TextOverflow.ellipsis,
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: _isScanning
+                                ? Colors.amberAccent
+                                : const Color(0xFF00E676),
+                            boxShadow: [
+                              BoxShadow(
+                                color: _isScanning
+                                    ? Colors.amber
+                                    : const Color(0xFF00E676),
+                                blurRadius: 8,
                               ),
                             ],
                           ),
                         ),
-                        // Кнопка-карандаш для смены региона
-                        GestureDetector(
-                          onTap: () {
-                            HapticFeedback.selectionClick();
-                            widget.onEditRegion();
-                          },
-                          child: Container(
-                            padding: const EdgeInsets.all(10),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.08),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.edit_rounded,
-                              color: Colors.white,
-                              size: 18,
-                            ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'SKYRADAR • МОНИТОРИНГ БПЛА',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13,
+                                  letterSpacing: 0.6,
+                                ),
+                              ),
+                              Text(
+                                'Регион: ${_userRegion ?? "Не выбран"} • Активных угроз: ${alertsList.length}',
+                                style: const TextStyle(
+                                  color: Colors.white70,
+                                  fontSize: 11,
+                                ),
+                              ),
+                              Text(
+                                _statusText,
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 10,
+                                ),
+                              ),
+                            ],
                           ),
+                        ),
+                        IconButton(
+                          tooltip: 'Сменить регион уведомлений',
+                          icon: const Icon(
+                            Icons.edit_location_alt_outlined,
+                            color: Colors.redAccent,
+                            size: 22,
+                          ),
+                          onPressed: () =>
+                              _showRegionOnboardingDialog(isFirstLaunch: false),
                         ),
                       ],
                     ),
                   ),
+                ],
+              ),
+            ),
+          ),
+
+          // 3. ПРАВАЯ ПАНЕЛЬ БЫСТРЫХ КНОПОК
+          Positioned(
+            right: 14,
+            bottom: 110,
+            child: Column(
+              children: [
+                _buildHudButton(
+                  icon: _isSatellite ? Icons.map_outlined : Icons.satellite_alt,
+                  tooltip: 'Слой карты (Спутник / Радар)',
+                  onTap: () => setState(() => _isSatellite = !_isSatellite),
                 ),
+                const SizedBox(height: 10),
+                _buildHudButton(
+                  icon: Icons.refresh,
+                  tooltip: 'Принудительно опросить каналы',
+                  onTap: () => _scanAllChannels(isInitial: false),
+                ),
+                const SizedBox(height: 10),
+                _buildHudButton(
+                  icon: Icons.bug_report_outlined,
+                  tooltip: 'Тест дрона и Push-уведомления',
+                  color: Colors.amberAccent,
+                  onTap: _triggerTestSimulation,
+                ),
+              ],
+            ),
+          ),
+
+          // 4. НИЖНЯЯ СВОДКА АКТИВНЫХ СИГНАЛОВ
+          Positioned(
+            left: 14,
+            right: 14,
+            bottom: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF12161F).withOpacity(0.94),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: alertsList.isEmpty
+                      ? Colors.white12
+                      : Colors.redAccent.withOpacity(0.5),
+                ),
+              ),
+              child: Row(
+                children: [
+                  Icon(
+                    alertsList.isEmpty
+                        ? Icons.verified_user_outlined
+                        : Icons.radar,
+                    color: alertsList.isEmpty
+                        ? const Color(0xFF00E676)
+                        : const Color(0xFFFF3B30),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      alertsList.isEmpty
+                          ? 'Небо чистое. Активных угроз в каналах не зафиксировано.'
+                          : 'Внимание! Зафиксирована активность в ${alertsList.length} р-нах. Нажмите на метку дрона для сводки.',
+                      style:
+                          const TextStyle(fontSize: 12.5, color: Colors.white),
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -852,277 +704,235 @@ class _LiveRadarMapScreenState extends State<LiveRadarMapScreen>
     );
   }
 
-  /// АККУРАТНЫЙ МИГАЮЩИЙ РАДАРНЫЙ МАЯК НА КАРТЕ (БЕЗ САМОДЕЛЬНЫХ КРИВЫХ ДРОНОВ)
-  Widget _buildRadarBeaconMarker({
-    required ActiveAlert alert,
-    required double progress,
+  Widget _buildHudButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    Color color = Colors.white,
   }) {
-    final bool isMissile = alert.type == ThreatType.missile;
-    final Color mainColor =
-        isMissile ? const Color(0xFFFF9F0A) : const Color(0xFFFF3B30);
-
-    final double wave2 = (progress + 0.5) % 1.0;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 48,
-          height: 48,
-          child: Stack(
-            alignment: Alignment.center,
-            children: [
-              // Первая расходящаяся волна радара
-              Container(
-                width: 18 + (progress * 30),
-                height: 18 + (progress * 30),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: mainColor.withOpacity((1.0 - progress) * 0.35),
-                  border: Border.all(
-                    color: mainColor.withOpacity(1.0 - progress),
-                    width: 1.5,
-                  ),
-                ),
-              ),
-              // Вторая расходящаяся волна радара
-              Container(
-                width: 18 + (wave2 * 30),
-                height: 18 + (wave2 * 30),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(
-                    color: mainColor.withOpacity((1.0 - wave2) * 0.7),
-                    width: 1.2,
-                  ),
-                ),
-              ),
-              // Центральное ядро радара
-              Container(
-                width: 24,
-                height: 24,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: mainColor,
-                  border: Border.all(color: Colors.white, width: 2),
-                  boxShadow: [
-                    BoxShadow(
-                      color: mainColor.withOpacity(0.8),
-                      blurRadius: 12,
-                      spreadRadius: 1,
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.radar_rounded,
-                  color: Colors.white,
-                  size: 14,
-                ),
-              ),
-            ],
-          ),
+    return Material(
+      color: const Color(0xFF161B26).withOpacity(0.9),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: Colors.white12),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Icon(icon, color: color, size: 22),
         ),
-        const SizedBox(height: 2),
-        // Компактная капсула с названием города
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
-          decoration: BoxDecoration(
-            color: const Color(0xFF0E1218).withOpacity(0.88),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: mainColor.withOpacity(0.55),
-              width: 0.8,
-            ),
-          ),
-          child: Text(
-            alert.point.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 10,
-              fontWeight: FontWeight.w800,
-              letterSpacing: -0.2,
-            ),
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  Widget _buildLiveDot() {
-    return AnimatedBuilder(
-      animation: _radarBeaconCtrl,
-      builder: (context, _) {
-        final glow = (1.0 - (_radarBeaconCtrl.value - 0.5).abs() * 2)
-            .clamp(0.2, 1.0);
-        return Container(
-          width: 12,
-          height: 12,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: _isScanning
-                ? const Color(0xFFFFD60A)
-                : const Color(0xFF30D158),
-            boxShadow: [
-              BoxShadow(
-                color: (_isScanning
-                        ? const Color(0xFFFFD60A)
-                        : const Color(0xFF30D158))
-                    .withOpacity(glow),
-                blurRadius: 10,
-                spreadRadius: 2,
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// КАРТОЧКА ДЕТАЛЕЙ В СТИЛЕ iOS BOTTOM SHEET ПРИ НАЖАТИИ НА РАДАР
-  void _showAppleAlertSheet(ActiveAlert alert) {
+  void _openAlertDetailsSheet(ActiveAlert alert) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
+      backgroundColor: const Color(0xFF141821),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
       builder: (ctx) {
-        return ClipRRect(
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 25, sigmaY: 25),
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
-              decoration: BoxDecoration(
-                color: const Color(0xFF141821).withOpacity(0.92),
-                borderRadius:
-                    const BorderRadius.vertical(top: Radius.circular(28)),
-                border: Border.all(color: Colors.white.withOpacity(0.1)),
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
+        return Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
                 children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4.5,
-                      decoration: BoxDecoration(
-                        color: Colors.white24,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.redAccent.withOpacity(0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      alert.type == ThreatType.missile
+                          ? Icons.rocket_launch
+                          : Icons.airplanemode_active,
+                      color: Colors.redAccent,
                     ),
                   ),
-                  const SizedBox(height: 18),
-                  Row(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFF3B30).withOpacity(0.16),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: const Icon(
-                          Icons.radar_rounded,
-                          color: Color(0xFFFF453A),
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              alert.point.name,
-                              style: const TextStyle(
-                                fontSize: 20,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -0.4,
-                              ),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              '${alert.point.regionGroup} • Сводка из ${alert.reports.length} ист.',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.white.withOpacity(0.5),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 18),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 300),
-                    child: ListView.separated(
-                      shrinkWrap: true,
-                      physics: const BouncingScrollPhysics(),
-                      itemCount: alert.reports.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 10),
-                      itemBuilder: (context, idx) {
-                        final rep = alert.reports[idx];
-                        final timeStr =
-                            '${rep.time.hour.toString().padLeft(2, '0')}:${rep.time.minute.toString().padLeft(2, '0')}';
-                        return Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(16),
-                            border: Border.all(
-                              color: Colors.white.withOpacity(0.06),
-                            ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          alert.point.name,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
                           ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        ),
+                        Text(
+                          'Регион: ${alert.point.regionGroup} • Подтверждений: ${alert.reports.length}',
+                          style: const TextStyle(
+                            color: Colors.white54,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: () {
+                      setState(() => _activeAlerts.remove(alert.point.name));
+                      Navigator.pop(ctx);
+                    },
+                    icon: const Icon(Icons.check_circle_outline, size: 18),
+                    label: const Text('Снять'),
+                  ),
+                ],
+              ),
+              const Divider(color: Colors.white12, height: 24),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 280),
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: alert.reports.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, idx) {
+                    final rep = alert.reports[idx];
+                    final timeStr =
+                        '${rep.time.hour.toString().padLeft(2, '0')}:${rep.time.minute.toString().padLeft(2, '0')}';
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0B0E14),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white10),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Row(
-                                mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    '@${rep.channel}',
-                                    style: const TextStyle(
-                                      color: Color(0xFF0A84FF),
-                                      fontWeight: FontWeight.w800,
-                                      fontSize: 13,
-                                    ),
-                                  ),
-                                  Text(
-                                    timeStr,
-                                    style: TextStyle(
-                                      color: Colors.white.withOpacity(0.4),
-                                      fontWeight: FontWeight.w600,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 6),
                               Text(
-                                rep.text,
+                                '@${rep.channel}',
                                 style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.w500,
-                                  height: 1.35,
+                                  color: Colors.lightBlueAccent,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 12,
+                                ),
+                              ),
+                              Text(
+                                timeStr,
+                                style: const TextStyle(
+                                  color: Colors.white38,
+                                  fontSize: 11,
                                 ),
                               ),
                             ],
                           ),
-                        );
-                      },
-                    ),
-                  ),
-                ],
+                          const SizedBox(height: 6),
+                          Text(
+                            rep.text,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 13,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
               ),
-            ),
+            ],
           ),
         );
       },
     );
   }
+}
+
+/// КАСТОМНАЯ ОТРИСОВКА РЕАЛИСТИЧНОГО СИЛУЭТА БПЛА И РАДАРА
+class RealisticTargetPainter extends CustomPainter {
+  final double sweepAngle;
+  final double pulseValue;
+  final ThreatType type;
+  final int sourcesCount;
+
+  RealisticTargetPainter({
+    required this.sweepAngle,
+    required this.pulseValue,
+    required this.type,
+    required this.sourcesCount,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2 - 6);
+    final baseColor = type == ThreatType.missile
+        ? const Color(0xFFFF9100)
+        : const Color(0xFFFF2A2A);
+
+    final pulsePaint = Paint()
+      ..color = baseColor.withOpacity(0.45 * (1.0 - pulseValue))
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0;
+    canvas.drawCircle(center, 14 + (pulseValue * 22), pulsePaint);
+
+    final sweepRect = Rect.fromCircle(center: center, radius: 24);
+    final sweepPaint = Paint()
+      ..shader = SweepGradient(
+        startAngle: 0.0,
+        endAngle: math.pi * 2,
+        colors: [
+          baseColor.withOpacity(0.0),
+          baseColor.withOpacity(0.35),
+        ],
+        stops: const [0.55, 1.0],
+        transform: GradientRotation(sweepAngle),
+      ).createShader(sweepRect);
+    canvas.drawCircle(center, 24, sweepPaint);
+
+    final ringPaint = Paint()
+      ..color = baseColor.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.4;
+    canvas.drawCircle(center, 24, ringPaint);
+
+    final dronePaint = Paint()
+      ..color = Colors.white
+      ..style = PaintingStyle.fill;
+
+    final path = Path();
+    if (type == ThreatType.drone) {
+      path.moveTo(center.dx, center.dy - 12);
+      path.lineTo(center.dx + 3, center.dy - 5);
+      path.lineTo(center.dx + 13, center.dy + 4);
+      path.lineTo(center.dx + 13, center.dy + 8);
+      path.lineTo(center.dx + 3, center.dy + 6);
+      path.lineTo(center.dx + 5, center.dy + 11);
+      path.lineTo(center.dx, center.dy + 9);
+      path.lineTo(center.dx - 5, center.dy + 11);
+      path.lineTo(center.dx - 3, center.dy + 6);
+      path.lineTo(center.dx - 13, center.dy + 8);
+      path.lineTo(center.dx - 13, center.dy + 4);
+      path.lineTo(center.dx - 3, center.dy - 5);
+      path.close();
+    } else {
+      path.moveTo(center.dx, center.dy - 13);
+      path.lineTo(center.dx + 4, center.dy - 3);
+      path.lineTo(center.dx + 4, center.dy + 6);
+      path.lineTo(center.dx + 8, center.dy + 11);
+      path.lineTo(center.dx - 8, center.dy + 11);
+      path.lineTo(center.dx - 4, center.dy + 6);
+      path.lineTo(center.dx - 4, center.dy - 3);
+      path.close();
+    }
+
+    canvas.drawShadow(path, baseColor, 6, true);
+    canvas.drawPath(path, dronePaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant RealisticTargetPainter oldDelegate) => true;
 }
