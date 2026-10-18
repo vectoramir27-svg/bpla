@@ -56,6 +56,9 @@ class ActiveAlert {
   });
 }
 
+// 0 = Тёмный радар, 1 = Спутник, 2 = Светлая схема
+enum MapStyleMode { darkRadar, satellite, lightOsm }
+
 class RadarDashboard extends StatefulWidget {
   const RadarDashboard({super.key});
 
@@ -79,13 +82,21 @@ class _RadarDashboardState extends State<RadarDashboard>
   final Map<String, ActiveAlert> _activeAlerts = {};
 
   String? _userRegion;
-  bool _isSatellite = false;
+  MapStyleMode _mapStyle = MapStyleMode.darkRadar;
   bool _isScanning = false;
   String _statusText = 'Синхронизация с каналами...';
 
   late final AnimationController _radarSweepController;
   late final AnimationController _pulseController;
   Timer? _pollTimer;
+
+  // Цветовая матрица для превращения бесплатной карты OSM в тактическую темную карту
+  static const ColorFilter _darkRadarFilter = ColorFilter.matrix(<double>[
+    -0.85,  0.0,   0.0,   0.0, 225.0,
+     0.0,  -0.85,  0.0,   0.0, 230.0,
+     0.0,   0.0,  -0.75,  0.0, 245.0,
+     0.0,   0.0,   0.0,   1.0,   0.0,
+  ]);
 
   @override
   void initState() {
@@ -101,12 +112,10 @@ class _RadarDashboardState extends State<RadarDashboard>
       duration: const Duration(milliseconds: 1800),
     )..repeat(reverse: true);
 
-    // Запускаем всё неблокирующим образом, чтобы интерфейс открылся мгновенно
     _bootAppNonBlocking();
   }
 
   Future<void> _bootAppNonBlocking() async {
-    // 1. Загружаем сохраненный регион с жестким тайм-аутом
     try {
       final prefs = await SharedPreferences.getInstance()
           .timeout(const Duration(seconds: 2));
@@ -121,13 +130,9 @@ class _RadarDashboardState extends State<RadarDashboard>
       }
     } catch (_) {}
 
-    // 2. Инициализируем пуш-уведомления в фоне (не блокируя UI!)
     unawaited(_initNotificationsSafe());
-
-    // 3. Первое сканирование каналов в фоне
     unawaited(_scanAllChannels(isInitial: true));
 
-    // 4. Регулярный опрос каждые 12 секунд
     _pollTimer = Timer.periodic(
       const Duration(seconds: 12),
       (_) => _scanAllChannels(isInitial: false),
@@ -317,6 +322,42 @@ class _RadarDashboardState extends State<RadarDashboard>
     });
   }
 
+  void _cycleMapStyle() {
+    setState(() {
+      if (_mapStyle == MapStyleMode.darkRadar) {
+        _mapStyle = MapStyleMode.satellite;
+      } else if (_mapStyle == MapStyleMode.satellite) {
+        _mapStyle = MapStyleMode.lightOsm;
+      } else {
+        _mapStyle = MapStyleMode.darkRadar;
+      }
+    });
+  }
+
+  Widget _buildMapTileLayer() {
+    if (_mapStyle == MapStyleMode.satellite) {
+      return TileLayer(
+        urlTemplate:
+            'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+        userAgentPackageName: 'com.skyshield.radar',
+      );
+    }
+
+    final osmLayer = TileLayer(
+      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      userAgentPackageName: 'com.skyshield.radar',
+    );
+
+    if (_mapStyle == MapStyleMode.darkRadar) {
+      return ColorFiltered(
+        colorFilter: _darkRadarFilter,
+        child: osmLayer,
+      );
+    }
+
+    return osmLayer;
+  }
+
   Future<void> _showRegionOnboardingDialog({bool isFirstLaunch = false}) async {
     String selected = _userRegion ?? GeoDatabase.availableRegions.first;
 
@@ -446,24 +487,17 @@ class _RadarDashboardState extends State<RadarDashboard>
     return Scaffold(
       body: Stack(
         children: [
-          // 1. ИНТЕРАКТИВНАЯ КАРТА (ОТКРЫВАЕТСЯ МГНОВЕННО)
+          // 1. ИНТЕРАКТИВНАЯ КАРТА (БЕЗ КЛЮЧЕЙ API, РАБОТАЕТ ВСЕГДА)
           FlutterMap(
             mapController: _mapController,
             options: const MapOptions(
               initialCenter: LatLng(55.55, 37.45),
               initialZoom: 7.2,
               minZoom: 4.0,
-              maxZoom: 17.0,
+              maxZoom: 18.0,
             ),
             children: [
-              TileLayer(
-                urlTemplate: _isSatellite
-                    ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
-                    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-                subdomains:
-                    _isSatellite ? const [] : const ['a', 'b', 'c', 'd'],
-                userAgentPackageName: 'com.skyshield.radar',
-              ),
+              _buildMapTileLayer(),
 
               CircleLayer(
                 circles: alertsList.map((alert) {
@@ -474,11 +508,11 @@ class _RadarDashboardState extends State<RadarDashboard>
                     useRadiusInMeter: true,
                     color:
                         (isMissile ? Colors.deepOrange : const Color(0xFFFF2A2A))
-                            .withOpacity(0.14),
+                            .withOpacity(0.16),
                     borderColor:
                         (isMissile ? Colors.orangeAccent : Colors.redAccent)
-                            .withOpacity(0.55),
-                    borderStrokeWidth: 1.5,
+                            .withOpacity(0.65),
+                    borderStrokeWidth: 1.8,
                   );
                 }).toList(),
               ),
@@ -514,10 +548,10 @@ class _RadarDashboardState extends State<RadarDashboard>
                                     vertical: 2,
                                   ),
                                   decoration: BoxDecoration(
-                                    color: Colors.black.withOpacity(0.8),
+                                    color: Colors.black.withOpacity(0.85),
                                     borderRadius: BorderRadius.circular(4),
                                     border: Border.all(
-                                      color: Colors.redAccent.withOpacity(0.6),
+                                      color: Colors.redAccent.withOpacity(0.7),
                                       width: 0.8,
                                     ),
                                   ),
@@ -638,9 +672,11 @@ class _RadarDashboardState extends State<RadarDashboard>
             child: Column(
               children: [
                 _buildHudButton(
-                  icon: _isSatellite ? Icons.map_outlined : Icons.satellite_alt,
-                  tooltip: 'Слой карты (Спутник / Радар)',
-                  onTap: () => setState(() => _isSatellite = !_isSatellite),
+                  icon: _mapStyle == MapStyleMode.satellite
+                      ? Icons.map_outlined
+                      : Icons.satellite_alt,
+                  tooltip: 'Сменить вид карты (Тёмный радар / Спутник / Схема)',
+                  onTap: _cycleMapStyle,
                 ),
                 const SizedBox(height: 10),
                 _buildHudButton(
